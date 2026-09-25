@@ -1,58 +1,64 @@
-name: RDP - CyberNexus Final (Public Mode)
+name: RDP - CyberNexus Final (Fix Drive Letter)
 
 on:
   workflow_dispatch:
 
 jobs:
   secure-rdp:
-    # Mudamos para windows-latest para rodar direto no GitHub sem precisar de PC físico
     runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
       # =========================================================
-      # 1. DISCO VIRTUAL (D: e E:)
+      # 1. DISCO VIRTUAL (USANDO F: E G: PARA EVITAR CONFLITO)
       # =========================================================
-      - name: Create Virtual Disks
+      - name: Create Virtual Disks (F: and G:)
         shell: powershell
         run: |
-          $vhdPathD = "C:\RDP-Storage-D.vhdx"
-          $vhdPathE = "C:\RDP-Storage-E.vhdx"
+          $vhdPathF = "C:\RDP-Storage-F.vhdx"
+          $vhdPathG = "C:\RDP-Storage-G.vhdx"
           $diskpartScript = "C:\vhd_script.txt"
 
-          if (Test-Path $vhdPathD) { Remove-Item $vhdPathD -Force -ErrorAction SilentlyContinue }
-          if (Test-Path $vhdPathE) { Remove-Item $vhdPathE -Force -ErrorAction SilentlyContinue }
+          if (Test-Path $vhdPathF) { Remove-Item $vhdPathF -Force -ErrorAction SilentlyContinue }
+          if (Test-Path $vhdPathG) { Remove-Item $vhdPathG -Force -ErrorAction SilentlyContinue }
           if (Test-Path $diskpartScript) { Remove-Item $diskpartScript -Force -ErrorAction SilentlyContinue }
 
-          Write-Host "Criando discos virtuais D: e E:..."
+          Write-Host "Criando comandos Diskpart para F: e G:..."
           
           $cmds = @(
-            "create vdisk file=`"$vhdPathD`" maximum=307200 type=expandable",
-            "select vdisk file=`"$vhdPathD`"",
+            "create vdisk file=`"$vhdPathF`" maximum=307200 type=expandable",
+            "select vdisk file=`"$vhdPathF`"",
             "attach vdisk",
             "clean",
             "create partition primary",
-            "format fs=ntfs quick label=RDP_D",
-            "assign letter=D",
+            "format fs=ntfs quick label=RDP_F",
+            "assign letter=F",
             "exit",
-            "create vdisk file=`"$vhdPathE`" maximum=307200 type=expandable",
-            "select vdisk file=`"$vhdPathE`"",
+            "create vdisk file=`"$vhdPathG`" maximum=307200 type=expandable",
+            "select vdisk file=`"$vhdPathG`"",
             "attach vdisk",
             "clean",
             "create partition primary",
-            "format fs=ntfs quick label=RDP_E",
-            "assign letter=E",
+            "format fs=ntfs quick label=RDP_G",
+            "assign letter=G",
             "exit"
           )
 
           foreach ($c in $cmds) { $c | Out-File -FilePath $diskpartScript -Append -Encoding ASCII }
 
-          Write-Host "Executando Diskpart..."
+          Write-Host "Executando Diskpart... (Isso pode demorar)"
           $output = diskpart /s $diskpartScript 2>&1
           Write-Host $output
 
           Start-Sleep -Seconds 20
-          Write-Host "Discos verificados."
+
+          # Verificação de segurança
+          if (-not (Test-Path "F:\") -or -not (Test-Path "G:\")) {
+              Write-Host "Tentando reparo de montagem..."
+              $repair = "select vdisk file=`"$vhdPathF`"; attach vdisk; online disk; assign letter=F; select vdisk file=`"$vhdPathG`"; attach vdisk; online disk; assign letter=G"
+              $repair | diskpart
+          }
+          Write-Host "Discos F: e G: verificados."
 
       # =========================================================
       # 2. CONFIGURAR RDP E TEMA ESCURO
@@ -60,16 +66,12 @@ jobs:
       - name: Configure RDP and Dark Mode
         shell: powershell
         run: |
-          # RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          
-          # Firewall
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           
-          # Dark Mode
           $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalization"
           if (-not (Test-Path $registryPath)) { New-Item -Path $registryPath -Force }
           Set-ItemProperty -Path $registryPath -Name "SystemUsesLightTheme" -Value 0 -Force
@@ -89,10 +91,7 @@ jobs:
           for ($i=0; $i -lt 16; $i++) { $password += $chars[(Get-Random -Maximum $chars.Length)] }
           
           $userName = "ZynexDEX"
-          
-          if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { 
-              Remove-LocalUser -Name $userName 
-          }
+          if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $userName }
 
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
           New-LocalUser -Name $userName -Password $securePass -AccountNeverExpires -FullName "RDP Admin"
@@ -152,12 +151,12 @@ jobs:
           Write-Host "=========================================="
           
           while ($true) {
-              $diskD = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue
-              $diskE = Get-Volume -DriveLetter E -ErrorAction SilentlyContinue
+              $diskF = Get-Volume -DriveLetter F -ErrorAction SilentlyContinue
+              $diskG = Get-Volume -DriveLetter G -ErrorAction SilentlyContinue
               
-              $statusD = if ($diskD) { "$([math]::Round($diskD.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
-              $statusE = if ($diskE) { "$([math]::Round($diskE.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
+              $statusF = if ($diskF) { "$([math]::Round($diskF.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
+              $statusG = if ($diskG) { "$([math]::Round($diskG.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
 
-              Write-Host "[$(Get-Date)] Status: Online | D: $statusD | E: $statusE"
+              Write-Host "[$(Get-Date)] Status: Online | F: $statusF | G: $statusG"
               Start-Sleep -Seconds 300
           }
