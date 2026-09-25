@@ -1,4 +1,4 @@
-name: RDP - CyberNexus Final (Fix Drive Letter)
+name: RDP - CyberNexus Final Stable
 
 on:
   workflow_dispatch:
@@ -10,9 +10,9 @@ jobs:
 
     steps:
       # =========================================================
-      # 1. DISCO VIRTUAL (USANDO F: E G: PARA EVITAR CONFLITO)
+      # 1. DISCO VIRTUAL (F: e G:) - VERSÃO ULTRA-ESTÁVEL
       # =========================================================
-      - name: Create Virtual Disks (F: and G:)
+      - name: Create Virtual Disks
         shell: powershell
         run: |
           $vhdPathF = "C:\RDP-Storage-F.vhdx"
@@ -23,42 +23,41 @@ jobs:
           if (Test-Path $vhdPathG) { Remove-Item $vhdPathG -Force -ErrorAction SilentlyContinue }
           if (Test-Path $diskpartScript) { Remove-Item $diskpartScript -Force -ErrorAction SilentlyContinue }
 
-          Write-Host "Criando comandos Diskpart para F: e G:..."
-          
-          $cmds = @(
-            "create vdisk file=`"$vhdPathF`" maximum=307200 type=expandable",
-            "select vdisk file=`"$vhdPathF`"",
-            "attach vdisk",
-            "clean",
-            "create partition primary",
-            "format fs=ntfs quick label=RDP_F",
-            "assign letter=F",
-            "exit",
-            "create vdisk file=`"$vhdPathG`" maximum=307200 type=expandable",
-            "select vdisk file=`"$vhdPathG`"",
-            "attach vdisk",
-            "clean",
-            "create partition primary",
-            "format fs=ntfs quick label=RDP_G",
-            "assign letter=G",
-            "exit"
-          )
+          Write-Host "Configurando comandos Diskpart..."
 
-          foreach ($c in $cmds) { $c | Out-File -FilePath $diskpartScript -Append -Encoding ASCII }
+          # Criando o arquivo de comando de forma simples para evitar erro de sintaxe YAML
+          # Disco F:
+          "create vdisk file=`"$vhdPathF`" maximum=307200 type=expandable" | Out-File -FilePath $diskpartScript -Encoding ASCII
+          "select vdisk file=`"$vhdPathF`"" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "attach vdisk" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "clean" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "create partition primary" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "format fs=ntfs quick label=RDP_F" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "assign letter=F" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "exit" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
 
-          Write-Host "Executando Diskpart... (Isso pode demorar)"
+          # Disco G:
+          "create vdisk file=`"$vhdPathG`" maximum=307200 type=expandable" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "select vdisk file=`"$vhdPathG`"" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "attach vdisk" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "clean" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "create partition primary" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "format fs=ntfs quick label=RDP_G" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "assign letter=G" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          "exit" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+
+          Write-Host "Executando Diskpart..."
           $output = diskpart /s $diskpartScript 2>&1
           Write-Host $output
 
           Start-Sleep -Seconds 20
 
-          # Verificação de segurança
           if (-not (Test-Path "F:\") -or -not (Test-Path "G:\")) {
               Write-Host "Tentando reparo de montagem..."
               $repair = "select vdisk file=`"$vhdPathF`"; attach vdisk; online disk; assign letter=F; select vdisk file=`"$vhdPathG`"; attach vdisk; online disk; assign letter=G"
               $repair | diskpart
           }
-          Write-Host "Discos F: e G: verificados."
+          Write-Host "Discos verificados."
 
       # =========================================================
       # 2. CONFIGURAR RDP E TEMA ESCURO
@@ -128,7 +127,6 @@ jobs:
           for ($i=0; $i -lt 15; $i++) {
               $tsIP = & $tsExe ip -4
               if ($tsIP) { break }
-              Write-Host "Aguardando IP..."
               Start-Sleep -Seconds 10
           }
 
