@@ -10,7 +10,7 @@ jobs:
 
     steps:
       # =========================================================
-      # 1. DISCO VIRTUAL (F: e G:) - VERSÃO ULTRA-ESTÁVEL
+      # 1. DISCO VIRTUAL (F: e G:)
       # =========================================================
       - name: Create Virtual Disks
         shell: powershell
@@ -23,28 +23,28 @@ jobs:
           if (Test-Path $vhdPathG) { Remove-Item $vhdPathG -Force -ErrorAction SilentlyContinue }
           if (Test-Path $diskpartScript) { Remove-Item $diskpartScript -Force -ErrorAction SilentlyContinue }
 
-          Write-Host "Configurando comandos Diskpart..."
+          Write-Host "Criando comandos Diskpart..."
+          
+          $cmds = @(
+            "create vdisk file=`"$vhdPathF`" maximum=307200 type=expandable",
+            "select vdisk file=`"$vhdPathF`"",
+            "attach vdisk",
+            "clean",
+            "create partition primary",
+            "format fs=ntfs quick label=RDP_F",
+            "assign letter=F",
+            "exit",
+            "create vdisk file=`"$vhdPathG`" maximum=307200 type=expandable",
+            "select vdisk file=`"$vhdPathG`"",
+            "attach vdisk",
+            "clean",
+            "create partition primary",
+            "format fs=ntfs quick label=RDP_G",
+            "assign letter=G",
+            "exit"
+          )
 
-          # Criando o arquivo de comando de forma simples para evitar erro de sintaxe YAML
-          # Disco F:
-          "create vdisk file=`"$vhdPathF`" maximum=307200 type=expandable" | Out-File -FilePath $diskpartScript -Encoding ASCII
-          "select vdisk file=`"$vhdPathF`"" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "attach vdisk" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "clean" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "create partition primary" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "format fs=ntfs quick label=RDP_F" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "assign letter=F" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "exit" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-
-          # Disco G:
-          "create vdisk file=`"$vhdPathG`" maximum=307200 type=expandable" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "select vdisk file=`"$vhdPathG`"" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "attach vdisk" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "clean" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "create partition primary" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "format fs=ntfs quick label=RDP_G" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "assign letter=G" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
-          "exit" | Out-File -FilePath $diskpartScript -Append -Encoding ASCII
+          foreach ($c in $cmds) { $c | Out-File -FilePath $diskpartScript -Append -Encoding ASCII }
 
           Write-Host "Executando Diskpart..."
           $output = diskpart /s $diskpartScript 2>&1
@@ -135,7 +135,7 @@ jobs:
           Write-Host "IP Tailscale: $tsIP"
 
       # =========================================================
-      # 5. MANTER CONEXÃO ATIVA
+      # 5. MANTER CONEXÃO ATIVA (CORREÇÃO DO ERRO DE CÁLCULO)
       # =========================================================
       - name: Maintain Connection
         shell: powershell
@@ -149,12 +149,22 @@ jobs:
           Write-Host "=========================================="
           
           while ($true) {
-              $diskF = Get-Volume -DriveLetter F -ErrorAction SilentlyContinue
-              $diskG = Get-Volume -DriveLetter G -ErrorAction SilentlyContinue
+              $diskD = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue
+              $diskE = Get-Volume -DriveLetter E -ErrorAction SilentlyContinue
               
-              $statusF = if ($diskF) { "$([math]::Round($diskF.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
-              $statusG = if ($diskG) { "$([math]::Round($diskG.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
+              $statusD = "Offline"
+              $statusE = "Offline"
 
-              Write-Host "[$(Get-Date)] Status: Online | F: $statusF | G: $statusG"
+              if ($diskD) {
+                  $valD = [math]::Round($diskD.SizeRemaining / 1GB, 2)
+                  $statusD = "$valD GB livre"
+              }
+
+              if ($diskE) {
+                  $valE = [math]::Round($diskE.SizeRemaining / 1GB, 2)
+                  $statusE = "$valE GB livre"
+              }
+
+              Write-Host "[$(Get-Date)] Status: Online | D: $statusD | E: $statusE"
               Start-Sleep -Seconds 300
           }
