@@ -1,113 +1,163 @@
-name: RDP
+name: RDP - CyberNexus Final (Public Mode)
 
 on:
   workflow_dispatch:
 
 jobs:
   secure-rdp:
+    # Mudamos para windows-latest para rodar direto no GitHub sem precisar de PC físico
     runs-on: windows-latest
-    timeout-minutes: 3600
+    timeout-minutes: 360
 
     steps:
-      - name: Configure Core RDP Settings
+      # =========================================================
+      # 1. DISCO VIRTUAL (D: e E:)
+      # =========================================================
+      - name: Create Virtual Disks
+        shell: powershell
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-                             -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "SecurityLayer" -Value 0 -Force
+          $vhdPathD = "C:\RDP-Storage-D.vhdx"
+          $vhdPathE = "C:\RDP-Storage-E.vhdx"
+          $diskpartScript = "C:\vhd_script.txt"
 
-          # Remove any existing rule with the same name to avoid duplication
-          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          if (Test-Path $vhdPathD) { Remove-Item $vhdPathD -Force -ErrorAction SilentlyContinue }
+          if (Test-Path $vhdPathE) { Remove-Item $vhdPathE -Force -ErrorAction SilentlyContinue }
+          if (Test-Path $diskpartScript) { Remove-Item $diskpartScript -Force -ErrorAction SilentlyContinue }
+
+          Write-Host "Criando discos virtuais D: e E:..."
           
-          # For testing, allow any incoming connection on port 3389
-          netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
+          $cmds = @(
+            "create vdisk file=`"$vhdPathD`" maximum=307200 type=expandable",
+            "select vdisk file=`"$vhdPathD`"",
+            "attach vdisk",
+            "clean",
+            "create partition primary",
+            "format fs=ntfs quick label=RDP_D",
+            "assign letter=D",
+            "exit",
+            "create vdisk file=`"$vhdPathE`" maximum=307200 type=expandable",
+            "select vdisk file=`"$vhdPathE`"",
+            "attach vdisk",
+            "clean",
+            "create partition primary",
+            "format fs=ntfs quick label=RDP_E",
+            "assign letter=E",
+            "exit"
+          )
 
-          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+          foreach ($c in $cmds) { $c | Out-File -FilePath $diskpartScript -Append -Encoding ASCII }
+
+          Write-Host "Executando Diskpart..."
+          $output = diskpart /s $diskpartScript 2>&1
+          Write-Host $output
+
+          Start-Sleep -Seconds 20
+          Write-Host "Discos verificados."
+
+      # =========================================================
+      # 2. CONFIGURAR RDP E TEMA ESCURO
+      # =========================================================
+      - name: Configure RDP and Dark Mode
+        shell: powershell
+        run: |
+          # RDP
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
+          
+          # Firewall
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+          
+          # Dark Mode
+          $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalization"
+          if (-not (Test-Path $registryPath)) { New-Item -Path $registryPath -Force }
+          Set-ItemProperty -Path $registryPath -Name "SystemUsesLightTheme" -Value 0 -Force
+          Set-ItemProperty -Path $registryPath -Name "AppsUseLightTheme" -Value 0 -Force
+          
           Restart-Service -Name TermService -Force
+          Write-Host "RDP e Dark Mode configurados."
 
-      - name: Create RDP User with Secure Password
+      # =========================================================
+      # 3. USUARIO RDP (ZynexDEX)
+      # =========================================================
+      - name: Create RDP User
+        shell: powershell
         run: |
-          Add-Type -AssemblyName System.Security
-          $charSet = @{
-              Upper   = [char[]](65..90)      # A-Z
-              Lower   = [char[]](97..122)     # a-z
-              Number  = [char[]](48..57)      # 0-9
-              Special = ([char[]](33..47) + [char[]](58..64) +
-                         [char[]](91..96) + [char[]](123..126)) # Special characters
+          $chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+          $password = ""
+          for ($i=0; $i -lt 16; $i++) { $password += $chars[(Get-Random -Maximum $chars.Length)] }
+          
+          $userName = "ZynexDEX"
+          
+          if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { 
+              Remove-LocalUser -Name $userName 
           }
-          $rawPassword = @()
-          $rawPassword += $charSet.Upper | Get-Random -Count 4
-          $rawPassword += $charSet.Lower | Get-Random -Count 4
-          $rawPassword += $charSet.Number | Get-Random -Count 4
-          $rawPassword += $charSet.Special | Get-Random -Count 4
-          $password = -join ($rawPassword | Sort-Object { Get-Random })
+
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "Skyro" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "Skyro"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "Skyro"
-          
-          echo "RDP_CREDS=User: Skyro | Password: $password" >> $env:GITHUB_ENV
-          
-          if (-not (Get-LocalUser -Name "Skyro")) {
-              Write-Error "User creation failed"
-              exit 1
-          }
+          New-LocalUser -Name $userName -Password $securePass -AccountNeverExpires -FullName "RDP Admin"
+          Add-LocalGroupMember -Group "Administrators" -Member $userName
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $userName
 
-      - name: Install Tailscale
-        run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
-          $installerPath = "$env:TEMP\tailscale.msi"
+          echo "RDP_USER=$userName" >> $env:GITHUB_ENV
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
           
-          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Write-Host "-------------------------------------------"
+          Write-Host "USUARIO: $userName"
+          Write-Host "SENHA: $password"
+          Write-Host "-------------------------------------------"
+          Write-Host "::add-mask::$password"
+
+      # =========================================================
+      # 4. TAILSCALE
+      # =========================================================
+      - name: Install Tailscale
+        shell: powershell
+        run: |
+          $installerPath = "$env:TEMP\tailscale-setup.msi"
+          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i `"$installerPath`" /quiet /norestart" -Wait
           Remove-Item $installerPath -Force
 
       - name: Establish Tailscale Connection
+        shell: powershell
         run: |
-          # Bring up Tailscale with the provided auth key and set a unique hostname
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          # Wait for Tailscale to assign an IP
-          $tsIP = $null
-          $retries = 0
-          while (-not $tsIP -and $retries -lt 10) {
-              $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
-              Start-Sleep -Seconds 5
-              $retries++
-          }
-          
-          if (-not $tsIP) {
-              Write-Error "Tailscale IP not assigned. Exiting."
-              exit 1
-          }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
-      - name: Verify RDP Accessibility
-        run: |
-          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
-          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
-          if (-not $testResult.TcpTestSucceeded) {
-              Write-Error "TCP connection to RDP port 3389 failed"
-              exit 1
-          }
-          Write-Host "TCP connectivity successful!"
+          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
+          & $tsExe up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
 
+          $tsIP = $null
+          for ($i=0; $i -lt 15; $i++) {
+              $tsIP = & $tsExe ip -4
+              if ($tsIP) { break }
+              Write-Host "Aguardando IP..."
+              Start-Sleep -Seconds 10
+          }
+
+          if (-not $tsIP) { exit 1 }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+          Write-Host "IP Tailscale: $tsIP"
+
+      # =========================================================
+      # 5. MANTER CONEXÃO ATIVA
+      # =========================================================
       - name: Maintain Connection
+        shell: powershell
         run: |
-          Write-Host "`n=== RDP ACCESS ==="
-          Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: Skyro"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
-          Write-Host "==================`n"
+          Write-Host "=========================================="
+          Write-Host "          RDP SESSION ACTIVE"
+          Write-Host "=========================================="
+          Write-Host "IP: $env:TAILSCALE_IP"
+          Write-Host "User: $env:RDP_USER"
+          Write-Host "Pass: $env:RDP_PASSWORD"
+          Write-Host "=========================================="
           
-          # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              $diskD = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue
+              $diskE = Get-Volume -DriveLetter E -ErrorAction SilentlyContinue
+              
+              $statusD = if ($diskD) { "$([math]::Round($diskD.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
+              $statusE = if ($diskE) { "$([math]::Round($diskE.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
+
+              Write-Host "[$(Get-Date)] Status: Online | D: $statusD | E: $statusE"
               Start-Sleep -Seconds 300
           }
