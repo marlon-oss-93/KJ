@@ -1,4 +1,4 @@
-name: RDP - CyberNexus Final (ULTRA STABLE)
+name: RDP + Linux (Debian) Setup
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
 
     steps:
       # =========================================================
-      # 1. DISCO VIRTUAL
+      # 1. DISCO VIRTUAL (D: e E:)
       # =========================================================
       - name: Create Virtual Disks
         shell: powershell
@@ -24,8 +24,6 @@ jobs:
           if (Test-Path $diskpartScript) { Remove-Item $diskpartScript -Force -ErrorAction SilentlyContinue }
 
           Write-Host "Criando comandos Diskpart..."
-          
-          # Criando comandos de forma simples para evitar erro de sintaxe
           $cmds = @(
             "create vdisk file=`"$vhdPathD`" maximum=307200 type=expandable",
             "select vdisk file=`"$vhdPathD`"",
@@ -46,22 +44,27 @@ jobs:
           )
 
           foreach ($c in $cmds) { $c | Out-File -FilePath $diskpartScript -Append -Encoding ASCII }
-
-          Write-Host "Executando Diskpart..."
-          $output = diskpart /s $diskpartScript 2>&1
-          Write-Host $output
-
+          diskpart /s $diskpartScript | Out-Null
           Start-Sleep -Seconds 20
-
-          if (-not (Test-Path "D:\") -or -not (Test-Path "E:\")) {
-              Write-Host "Tentando reparo de montagem..."
-              $repair = "select vdisk file=`"$vhdPathD`"; attach vdisk; online disk; assign letter=D; select vdisk file=`"$vhdPathE`"; attach vdisk; online disk; assign letter=E"
-              $repair | diskpart
-          }
-          Write-Host "Discos verificados."
+          Write-Host "Discos D: e E: prontos."
 
       # =========================================================
-      # 2. CONFIGURAR RDP E TEMA ESCURO
+      # 2. INSTALAÇÃO DO LINUX (WSL / DEBIAN)
+      # =========================================================
+      - name: Install WSL and Debian
+        shell: powershell
+        run: |
+          Write-Host "Ativando WSL..."
+          dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
+          dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
+          
+          Write-Host "Instalando Debian (isso pode demorar)..."
+          wsl --install -d Debian --no-launch
+          
+          Write-Host "WSL e Debian configurados!"
+
+      # =========================================================
+      # 3. CONFIGURAR RDP E TEMA ESCURO
       # =========================================================
       - name: Configure RDP and Dark Mode
         shell: powershell
@@ -72,7 +75,7 @@ jobs:
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           
-          $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalization"
+          $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes/Personalization"
           if (-not (Test-Path $registryPath)) { New-Item -Path $registryPath -Force }
           Set-ItemProperty -Path $registryPath -Name "SystemUsesLightTheme" -Value 0 -Force
           Set-ItemProperty -Path $registryPath -Name "AppsUseLightTheme" -Value 0 -Force
@@ -81,7 +84,7 @@ jobs:
           Write-Host "RDP e Dark Mode configurados."
 
       # =========================================================
-      # 3. USUARIO RDP (ZynexDEX)
+      # 4. USUARIO RDP (ZynexDEX)
       # =========================================================
       - name: Create RDP User
         shell: powershell
@@ -89,8 +92,8 @@ jobs:
           $chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
           $password = ""
           for ($i=0; $i -lt 16; $i++) { $password += $chars[(Get-Random -Maximum $chars.Length)] }
-          
           $userName = "ZynexDEX"
+          
           if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $userName }
 
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
@@ -107,7 +110,7 @@ jobs:
           Write-Host "-------------------------------------------"
 
       # =========================================================
-      # 4. TAILSCALE
+      # 5. TAILSCALE
       # =========================================================
       - name: Install Tailscale
         shell: powershell
@@ -136,7 +139,7 @@ jobs:
           Write-Host "IP Tailscale: $tsIP"
 
       # =========================================================
-      # 5. MANTER CONEXÃO ATIVA
+      # 6. MANTER CONEXÃO ATIVA
       # =========================================================
       - name: Maintain Connection
         shell: powershell
@@ -145,19 +148,16 @@ jobs:
           Write-Host "          RDP SESSION ACTIVE"
           Write-Host "=========================================="
           Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "USER: $env:RDP_USER"
-          Write-Host "PASS: $env:RDP_PASSWORD"
+          Write-Host "User: $env:RDP_USER"
+          Write-Host "Pass: $env:RDP_PASSWORD"
           Write-Host "=========================================="
           
           while ($true) {
               $diskD = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue
               $diskE = Get-Volume -DriveLetter E -ErrorAction SilentlyContinue
               
-              $statusD = "Offline"
-              $statusE = "Offline"
-
-              if ($diskD) { $statusD = "Online" }
-              if ($diskE) { $statusE = "Online" }
+              $statusD = if ($diskD) { "Online" } else { "Offline" }"
+              $statusE = if ($diskE) { "Online" } else { "Offline" }"
 
               Write-Host "[$(Get-Date)] Status: Online | D: $statusD | E: $statusE"
               Start-Sleep -Seconds 300
