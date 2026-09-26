@@ -1,4 +1,4 @@
-name: RDP - CyberNexus Final (Fixed Syntax)
+name: RDP - CyberNexus Final (ULTRA STABLE)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
 
     steps:
       # =========================================================
-      # 1. DISCO VIRTUAL (D: e E:)
+      # 1. DISCO VIRTUAL
       # =========================================================
       - name: Create Virtual Disks
         shell: powershell
@@ -25,6 +25,7 @@ jobs:
 
           Write-Host "Criando comandos Diskpart..."
           
+          # Criando comandos de forma simples para evitar erro de sintaxe
           $cmds = @(
             "create vdisk file=`"$vhdPathD`" maximum=307200 type=expandable",
             "select vdisk file=`"$vhdPathD`"",
@@ -104,7 +105,6 @@ jobs:
           Write-Host "USUARIO: $userName"
           Write-Host "SENHA: $password"
           Write-Host "-------------------------------------------"
-          Write-Host "::add-mask::$password"
 
       # =========================================================
       # 4. TAILSCALE
@@ -121,31 +121,22 @@ jobs:
         shell: powershell
         run: |
           $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          
-          Write-Host "Iniciando conexão Tailscale..."
           & $tsExe up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
+
           $tsIP = $null
-          for ($i=0; $i -lt 20; $i++) {
+          for ($i=0; $i -lt 15; $i++) {
               $tsIP = & $tsExe ip -4
-              if ($tsIP) { 
-                  $tsIP = $tsIP.Trim()
-                  break 
-              }
-              Write-Host "Tentativa ${i}: Aguardando IP..."
+              if ($tsIP) { $tsIP = $tsIP.Trim(); break }
+              Write-Host "Aguardando IP..."
               Start-Sleep -Seconds 10
           }
 
-          if (-not $tsIP) {
-              Write-Error "Falha ao obter IP da Tailscale. Verifique sua Auth Key!"
-              exit 1
-          }
-
+          if (-not $tsIP) { exit 1 }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-          Write-Host "Conectado! IP: $tsIP"
+          Write-Host "IP Tailscale: $tsIP"
 
       # =========================================================
-      # 5. MANTER CONEXÃO ATIVA (MONITORAMENTO)
+      # 5. MANTER CONEXÃO ATIVA
       # =========================================================
       - name: Maintain Connection
         shell: powershell
@@ -154,8 +145,8 @@ jobs:
           Write-Host "          RDP SESSION ACTIVE"
           Write-Host "=========================================="
           Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "User: $env:RDP_USER"
-          Write-Host "Pass: $env:RDP_PASSWORD"
+          Write-Host "USER: $env:RDP_USER"
+          Write-Host "PASS: $env:RDP_PASSWORD"
           Write-Host "=========================================="
           
           while ($true) {
@@ -165,15 +156,8 @@ jobs:
               $statusD = "Offline"
               $statusE = "Offline"
 
-              if ($diskD) {
-                  $valD = [math]::Round($diskD.SizeRemaining / 1GB, 2)
-                  $statusD = "$valD GB livre"
-              }
-
-              if ($diskE) {
-                  $valE = [math]::Round($diskE.SizeRemaining / 1GB, 2)
-                  $statusE = "$valE GB livre"
-              }
+              if ($diskD) { $statusD = "Online" }
+              if ($diskE) { $statusE = "Online" }
 
               Write-Host "[$(Get-Date)] Status: Online | D: $statusD | E: $statusE"
               Start-Sleep -Seconds 300
