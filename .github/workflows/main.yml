@@ -1,4 +1,4 @@
-name: RDP - CyberNexus Final (Full Access)
+name: RDP - CyberNexus Final (Ultra Stable)
 
 on:
   workflow_dispatch:
@@ -10,37 +10,37 @@ jobs:
 
     steps:
       # =========================================================
-      # 1. DISCO VIRTUAL (F: e G:)
+      # 1. DISCO VIRTUAL (D: e E:)
       # =========================================================
       - name: Create Virtual Disks
         shell: powershell
         run: |
-          $vhdPathF = "C:\RDP-Storage-F.vhdx"
-          $vhdPathG = "C:\RDP-Storage-G.vhdx"
+          $vhdPathD = "C:\RDP-Storage-D.vhdx"
+          $vhdPathE = "C:\RDP-Storage-E.vhdx"
           $diskpartScript = "C:\vhd_script.txt"
 
-          if (Test-Path $vhdPathF) { Remove-Item $vhdPathF -Force -ErrorAction SilentlyContinue }
-          if (Test-Path $vhdPathG) { Remove-Item $vhdPathG -Force -ErrorAction SilentlyContinue }
+          if (Test-Path $vhdPathD) { Remove-Item $vhdPathD -Force -ErrorAction SilentlyContinue }
+          if (Test-Path $vhdPathE) { Remove-Item $vhdPathE -Force -ErrorAction SilentlyContinue }
           if (Test-Path $diskpartScript) { Remove-Item $diskpartScript -Force -ErrorAction SilentlyContinue }
 
-          Write-Host "Criando comandos Diskpart..."
+          Write-Host "Configurando comandos Diskpart..."
           
           $cmds = @(
-            "create vdisk file=`"$vhdPathF`" maximum=307200 type=expandable",
-            "select vdisk file=`"$vhdPathF`"",
+            "create vdisk file=`"$vhdPathD`" maximum=307200 type=expandable",
+            "select vdisk file=`"$vhdPathD`"",
             "attach vdisk",
             "clean",
             "create partition primary",
-            "format fs=ntfs quick label=RDP_F",
-            "assign letter=F",
+            "format fs=ntfs quick label=RDP_D",
+            "assign letter=D",
             "exit",
-            "create vdisk file=`"$vhdPathG`" maximum=307200 type=expandable",
-            "select vdisk file=`"$vhdPathG`"",
+            "create vdisk file=`"$vhdPathE`" maximum=307200 type=expandable",
+            "select vdisk file=`"$vhdPathE`"",
             "attach vdisk",
             "clean",
             "create partition primary",
-            "format fs=ntfs quick label=RDP_G",
-            "assign letter=G",
+            "format fs=ntfs quick label=RDP_E",
+            "assign letter=E",
             "exit"
           )
 
@@ -52,9 +52,9 @@ jobs:
 
           Start-Sleep -Seconds 20
 
-          if (-not (Test-Path "F:\") -or -not (Test-Path "G:\")) {
+          if (-not (Test-Path "D:\") -or -not (Test-Path "E:\")) {
               Write-Host "Tentando reparo de montagem..."
-              $repair = "select vdisk file=`"$vhdPathF`"; attach vdisk; online disk; assign letter=F; select vdisk file=`"$vhdPathG`"; attach vdisk; online disk; assign letter=G"
+              $repair = "select vdisk file=`"$vhdPathD`"; attach vdisk; online disk; assign letter=D; select vdisk file=`"$vhdPathE`"; attach vdisk; online disk; assign letter=E"
               $repair | diskpart
           }
           Write-Host "Discos verificados."
@@ -97,14 +97,17 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member $userName
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $userName
 
-          # Salva para o próximo passo
           echo "RDP_USER=$userName" >> $env:GITHUB_ENV
           echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
           
-          Write-Host "Usuário e Senha configurados internamente."
+          Write-Host "-------------------------------------------"
+          Write-Host "USUARIO: $userName"
+          Write-Host "SENHA: $password"
+          Write-Host "-------------------------------------------"
+          Write-Host "::add-mask::$password"
 
       # =========================================================
-      # 4. TAILSCALE
+      # 4. TAILSCALE (INSTALAÇÃO E CONEXÃO AGRESSIVA)
       # =========================================================
       - name: Install Tailscale
         shell: powershell
@@ -118,37 +121,43 @@ jobs:
         shell: powershell
         run: |
           $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $tsExe up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-
+          
+          Write-Host "Iniciando conexão Tailscale..."
+          # O segredo está no comando abaixo: usamos o comando 'up' com a chave e garantimos que seja silencioso
+          & $tsExe up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID --accept-routes --accept-dns=false
+          
+          Write-Host "Aguardando IP..."
           $tsIP = $null
-          for ($i=0; $i -lt 15; $i++) {
+          for ($i=0; $i -lt 20; $i++) {
               $tsIP = & $tsExe ip -4
-              if ($tsIP) { break }
-              Write-Host "Aguardando IP..."
+              if ($tsIP) { 
+                  $tsIP = $tsIP.Trim()
+                  break 
+              }
+              Write-Host "Tentativa $i: Aguardando IP..."
               Start-Sleep -Seconds 10
           }
 
-          if (-not $tsIP) { exit 1 }
+          if (-not $tsIP) {
+              Write-Error "Falha ao obter IP da Tailscale. Verifique sua Auth Key!"
+              exit 1
+          }
+
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-          Write-Host "IP Tailscale: $tsIP"
+          Write-Host "Conectado! IP: $tsIP"
 
       # =========================================================
-      # 5. MANTER CONEXÃO ATIVA (EXIBIÇÃO FINAL DE DADOS)
+      # 5. MANTER CONEXÃO ATIVA (MONITORAMENTO)
       # =========================================================
       - name: Maintain Connection
         shell: powershell
         run: |
-          # Espera um pouco para garantir que o IP está disponível no ambiente
-          Start-Sleep -Seconds 5
-
           Write-Host "=========================================="
           Write-Host "          RDP SESSION ACTIVE"
           Write-Host "=========================================="
           Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "USER: $env:RDP_USER"
-          Write-Host "PASS: $env:RDP_PASSWORD"
-          Write-Host "=========================================="
-          Write-Host "Aguardando conexão... Não feche esta janela."
+          Write-Host "User: $env:RDP_USER"
+          Write-Host "Pass: $env:RDP_PASSWORD"
           Write-Host "=========================================="
           
           while ($true) {
