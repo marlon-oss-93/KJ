@@ -1,4 +1,4 @@
-name: RDP - CyberNexus Final Stable
+name: RDP - CyberNexus Final (Full Access)
 
 on:
   workflow_dispatch:
@@ -71,7 +71,7 @@ jobs:
           netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
           netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
           
-          $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalization"
+          $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes/Personalization"
           if (-not (Test-Path $registryPath)) { New-Item -Path $registryPath -Force }
           Set-ItemProperty -Path $registryPath -Name "SystemUsesLightTheme" -Value 0 -Force
           Set-ItemProperty -Path $registryPath -Name "AppsUseLightTheme" -Value 0 -Force
@@ -97,14 +97,11 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member $userName
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member $userName
 
+          # Salva para o próximo passo
           echo "RDP_USER=$userName" >> $env:GITHUB_ENV
           echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
           
-          Write-Host "-------------------------------------------"
-          Write-Host "USUARIO: $userName"
-          Write-Host "SENHA: $password"
-          Write-Host "-------------------------------------------"
-          Write-Host "::add-mask::$password"
+          Write-Host "Usuário e Senha configurados internamente."
 
       # =========================================================
       # 4. TAILSCALE
@@ -127,6 +124,7 @@ jobs:
           for ($i=0; $i -lt 15; $i++) {
               $tsIP = & $tsExe ip -4
               if ($tsIP) { break }
+              Write-Host "Aguardando IP..."
               Start-Sleep -Seconds 10
           }
 
@@ -135,35 +133,30 @@ jobs:
           Write-Host "IP Tailscale: $tsIP"
 
       # =========================================================
-      # 5. MANTER CONEXÃO ATIVA (CORREÇÃO DO ERRO DE CÁLCULO)
+      # 5. MANTER CONEXÃO ATIVA (EXIBIÇÃO FINAL DE DADOS)
       # =========================================================
       - name: Maintain Connection
         shell: powershell
         run: |
+          # Espera um pouco para garantir que o IP está disponível no ambiente
+          Start-Sleep -Seconds 5
+
           Write-Host "=========================================="
           Write-Host "          RDP SESSION ACTIVE"
           Write-Host "=========================================="
           Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "User: $env:RDP_USER"
-          Write-Host "Pass: $env:RDP_PASSWORD"
+          Write-Host "USER: $env:RDP_USER"
+          Write-Host "PASS: $env:RDP_PASSWORD"
+          Write-Host "=========================================="
+          Write-Host "Aguardando conexão... Não feche esta janela."
           Write-Host "=========================================="
           
           while ($true) {
               $diskD = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue
               $diskE = Get-Volume -DriveLetter E -ErrorAction SilentlyContinue
               
-              $statusD = "Offline"
-              $statusE = "Offline"
-
-              if ($diskD) {
-                  $valD = [math]::Round($diskD.SizeRemaining / 1GB, 2)
-                  $statusD = "$valD GB livre"
-              }
-
-              if ($diskE) {
-                  $valE = [math]::Round($diskE.SizeRemaining / 1GB, 2)
-                  $statusE = "$valE GB livre"
-              }
+              $statusD = if ($diskD) { "$([math]::Round($diskD.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
+              $statusE = if ($diskE) { "$([math]::Round($diskE.SizeRemaining / 1GB, 2)) GB livre" } else { "Offline" }"
 
               Write-Host "[$(Get-Date)] Status: Online | D: $statusD | E: $statusE"
               Start-Sleep -Seconds 300
