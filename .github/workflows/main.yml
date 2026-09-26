@@ -1,4 +1,4 @@
-name: RDP + Linux (Debian) Setup
+name: RDP - CyberNexus Final (Auto-Letter)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
 
     steps:
       # =========================================================
-      # 1. DISCO VIRTUAL (D: e E:)
+      # 1. DISCO VIRTUAL (COM AUTO-DETECTOR DE LETRA LIVRE)
       # =========================================================
       - name: Create Virtual Disks
         shell: powershell
@@ -23,7 +23,21 @@ jobs:
           if (Test-Path $vhdPathE) { Remove-Item $vhdPathE -Force -ErrorAction SilentlyContinue }
           if (Test-Path $diskpartScript) { Remove-Item $diskpartScript -Force -ErrorAction SilentlyContinue }
 
-          Write-Host "Criando comandos Diskpart..."
+          # Função para encontrar uma letra livre (F, G, H...)
+          function Get-FreeLetter {
+            $letters = "F","G","H","I","J","K"
+            foreach ($l in $letters) {
+              if (-not (Test-Path "$($l):")) { return $l }
+            }
+            return "F"
+          }
+
+          $letterD = Get-FreeLetter
+          $letterE = Get-FreeLetter # Ele vai pegar a próxima após a função rodar
+
+          Write-Host "Letra detectada para D: $letterD"
+          Write-Host "Letra detectada para E: $letterE"
+
           $cmds = @(
             "create vdisk file=`"$vhdPathD`" maximum=307200 type=expandable",
             "select vdisk file=`"$vhdPathD`"",
@@ -31,7 +45,7 @@ jobs:
             "clean",
             "create partition primary",
             "format fs=ntfs quick label=RDP_D",
-            "assign letter=D",
+            "assign letter=$letterD",
             "exit",
             "create vdisk file=`"$vhdPathE`" maximum=307200 type=expandable",
             "select vdisk file=`"$vhdPathE`"",
@@ -39,32 +53,26 @@ jobs:
             "clean",
             "create partition primary",
             "format fs=ntfs quick label=RDP_E",
-            "assign letter=E",
+            "assign letter=$letterE",
             "exit"
           )
 
           foreach ($c in $cmds) { $c | Out-File -FilePath $diskpartScript -Append -Encoding ASCII }
-          diskpart /s $diskpartScript | Out-Null
+
+          Write-Host "Executando Diskpart..."
+          $output = diskpart /s $diskpartScript 2>&1
+          Write-Host $output
+
+          if ($LASTEXITCODE -ne 0) {
+              Write-Error "Erro no Diskpart. Verifique o log acima."
+              exit 1
+          }
+
           Start-Sleep -Seconds 20
-          Write-Host "Discos D: e E: prontos."
+          Write-Host "Discos $letterD e $letterE prontos!"
 
       # =========================================================
-      # 2. INSTALAÇÃO DO LINUX (WSL / DEBIAN)
-      # =========================================================
-      - name: Install WSL and Debian
-        shell: powershell
-        run: |
-          Write-Host "Ativando WSL..."
-          dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart
-          dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart
-          
-          Write-Host "Instalando Debian (isso pode demorar)..."
-          wsl --install -d Debian --no-launch
-          
-          Write-Host "WSL e Debian configurados!"
-
-      # =========================================================
-      # 3. CONFIGURAR RDP E TEMA ESCURO
+      # 2. CONFIGURAR RDP E TEMA ESCURO
       # =========================================================
       - name: Configure RDP and Dark Mode
         shell: powershell
@@ -84,7 +92,7 @@ jobs:
           Write-Host "RDP e Dark Mode configurados."
 
       # =========================================================
-      # 4. USUARIO RDP (ZynexDEX)
+      # 3. USUARIO RDP (ZynexDEX)
       # =========================================================
       - name: Create RDP User
         shell: powershell
@@ -92,8 +100,8 @@ jobs:
           $chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
           $password = ""
           for ($i=0; $i -lt 16; $i++) { $password += $chars[(Get-Random -Maximum $chars.Length)] }
-          $userName = "ZynexDEX"
           
+          $userName = "ZynexDEX"
           if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $userName }
 
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
@@ -108,9 +116,10 @@ jobs:
           Write-Host "USUARIO: $userName"
           Write-Host "SENHA: $password"
           Write-Host "-------------------------------------------"
+          Write-Host "::add-mask::$password"
 
       # =========================================================
-      # 5. TAILSCALE
+      # 4. TAILSCALE
       # =========================================================
       - name: Install Tailscale
         shell: powershell
@@ -139,7 +148,7 @@ jobs:
           Write-Host "IP Tailscale: $tsIP"
 
       # =========================================================
-      # 6. MANTER CONEXÃO ATIVA
+      # 5. MANTER CONEXÃO ATIVA
       # =========================================================
       - name: Maintain Connection
         shell: powershell
