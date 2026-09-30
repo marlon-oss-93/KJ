@@ -1,10 +1,10 @@
-name: Q4OS Trinity - DeepHat Mobile PC
+name: Q4OS - DeepHat RDP
 
 on:
   workflow_dispatch:
 
 jobs:
-  q4os:
+  q4os-rdp:
     runs-on: ubuntu-latest
     timeout-minutes: 330
 
@@ -14,48 +14,49 @@ jobs:
       CPUS: 2
       DISK_SIZE: 145G
 
-      USERNAME: ZynexDEX
-      PASSWORD: ZynexDEX123!
+      Q4OS_USER: ZynexDEX
+      Q4OS_PASSWORD: ZynexDEX123!
 
-      VNC_PORT: 5900
-      NOVNC_PORT: 6080
-
-      ISO_URL: https://sourceforge.net/projects/q4os/files/stable/q4os-6.9-x64-instcd.r1.iso/download
-      ISO_NAME: q4os-6.9-x64-instcd.r1.iso
+      RDP_PORT: 3389
 
     steps:
 
-      # =====================================================
-      # 1. PREPARAR AMBIENTE
-      # =====================================================
+      # =========================================================
+      # INSTALL DEPENDENCIES
+      # =========================================================
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             qemu-system-x86 \
             qemu-utils \
             wget \
             curl \
             git \
-            python3
+            xz-utils
 
-      # =====================================================
-      # 2. BAIXAR Q4OS
-      # =====================================================
+          echo "Dependencies installed."
+
+      # =========================================================
+      # DOWNLOAD Q4OS
+      # =========================================================
+
       - name: Download Q4OS
         run: |
           mkdir -p "$HOME/q4os"
 
-          wget \
-            --show-progress \
-            -O "$HOME/q4os/$ISO_NAME" \
-            "$ISO_URL"
+          wget --show-progress \
+            -O "$HOME/q4os/q4os.iso" \
+            "https://sourceforge.net/projects/q4os/files/stable/q4os-6.9-x64-instcd.r1.iso/download"
 
           echo "Q4OS downloaded successfully."
 
-      # =====================================================
-      # 3. CRIAR DISCO VIRTUAL 145 GB
-      # =====================================================
+      # =========================================================
+      # CREATE 145GB VIRTUAL DISK
+      # =========================================================
+
       - name: Create Virtual Disk
         run: |
           qemu-img create \
@@ -63,13 +64,17 @@ jobs:
             "$HOME/q4os/$VM_NAME.qcow2" \
             "$DISK_SIZE"
 
-          echo "Virtual disk created:"
+          echo "=========================================="
+          echo "Q4OS VIRTUAL DISK"
+          echo "=========================================="
+
           qemu-img info "$HOME/q4os/$VM_NAME.qcow2"
 
-      # =====================================================
-      # 4. INICIAR QEMU
-      # =====================================================
-      - name: Start QEMU
+      # =========================================================
+      # START QEMU
+      # =========================================================
+
+      - name: Start Q4OS
         run: |
           cd "$HOME/q4os"
 
@@ -81,7 +86,7 @@ jobs:
             -smp "$CPUS" \
             -cpu max \
             -drive file="$VM_NAME.qcow2",format=qcow2,if=virtio \
-            -cdrom "$ISO_NAME" \
+            -cdrom q4os.iso \
             -boot order=d \
             -vga virtio \
             -display none \
@@ -94,81 +99,119 @@ jobs:
 
           sleep 10
 
-          echo "QEMU started."
+          if kill -0 "$(cat "$HOME/q4os/qemu.pid")" 2>/dev/null; then
+            echo "QEMU started successfully."
+          else
+            echo "QEMU failed to start."
+            cat "$HOME/q4os/qemu.log"
+            exit 1
+          fi
 
-      # =====================================================
-      # 5. INSTALAR NOVNC
-      # =====================================================
-      - name: Setup noVNC
+      # =========================================================
+      # INSTALL TAILSCALE
+      # =========================================================
+
+      - name: Install Tailscale
         run: |
-          cd "$HOME/q4os"
+          curl -fsSL https://tailscale.com/install.sh | sh
 
-          git clone --depth 1 \
-            https://github.com/novnc/noVNC.git \
-            novnc
+          sudo systemctl enable --now tailscaled
 
-          cd novnc
+          echo "Tailscale installed."
 
-          nohup ./utils/novnc_proxy \
-            --vnc localhost:$VNC_PORT \
-            --listen 0.0.0.0:$NOVNC_PORT \
-            > "$HOME/q4os/novnc.log" 2>&1 &
+      # =========================================================
+      # ESTABLISH TAILSCALE CONNECTION
+      # =========================================================
 
-          echo $! > "$HOME/q4os/novnc.pid"
+      - name: Establish Tailscale Connection
+        run: |
+          if [ -z "${{ secrets.TAILSCALE_AUTH_KEY }}" ]; then
+            echo "TAILSCALE_AUTH_KEY secret is missing."
+            exit 1
+          fi
+
+          sudo tailscale up \
+            --auth-key="${{ secrets.TAILSCALE_AUTH_KEY }}" \
+            --hostname="gh-q4os-${GITHUB_RUN_ID}"
 
           sleep 5
 
-          echo "noVNC started."
+          TS_IP="$(tailscale ip -4 | head -n 1)"
 
-      # =====================================================
-      # 6. SESSION ACTIVE
-      # =====================================================
-      - name: SESSION ACTIVE
+          if [ -z "$TS_IP" ]; then
+            echo "Tailscale IP not assigned."
+            exit 1
+          fi
+
+          echo "TAILSCALE_IP=$TS_IP" >> "$GITHUB_ENV"
+
+          echo "Tailscale IP: $TS_IP"
+
+      # =========================================================
+      # CREATE LOGIN INFORMATION
+      # =========================================================
+
+      - name: Create RDP User with Secure Password
         shell: pwsh
         env:
-          USERNAME: ${{ env.USERNAME }}
-          PASSWORD: ${{ env.PASSWORD }}
+          Q4OS_USER: ${{ env.Q4OS_USER }}
+          Q4OS_PASSWORD: ${{ env.Q4OS_PASSWORD }}
         run: |
-          $ip = (Invoke-RestMethod -Uri "https://api.ipify.org").Trim()
-          $user = $env:USERNAME
-          $pass = $env:PASSWORD
+          $user = $env:Q4OS_USER
+          $pass = $env:Q4OS_PASSWORD
 
-          Write-Host "===================================================="
-          Write-Host "        🚀 SESSION ACTIVE - DEEPHAT TUNED 🚀        "
-          Write-Host "===================================================="
-          Write-Host "  [+] IP ADDRESS:     $ip"
-          Write-Host "  [+] USERNAME:       $user"
-          Write-Host "  [+] PASSWORD:       $pass"
-          Write-Host "===================================================="
-          Write-Host "  [+] STORAGE:        145GB (VIRTUAL EXPANSION)"
-          Write-Host "  [+] MODE:           GAMING OVERDRIVE (DEBLOATED)"
-          Write-Host "===================================================="
-          Write-Host "  [!] STATUS:         ONLINE (ULTRA-LOW LATENCY)"
-          Write-Host "===================================================="
-          Write-Host "  [!] DICA: Use o Windows App para conectar."
-          Write-Host "===================================================="
+          echo "RDP_USER=$user" >> $env:GITHUB_ENV
+          echo "RDP_PASSWORD=$pass" >> $env:GITHUB_ENV
 
-      # =====================================================
-      # 7. STATUS
-      # =====================================================
-      - name: Check Session
+          Write-Host "RDP credentials configured."
+
+      # =========================================================
+      # VERIFY TAILSCALE
+      # =========================================================
+
+      - name: Verify RDP Accessibility
         run: |
           echo "=========================================="
-          echo "Q4OS MOBILE SESSION"
+          echo "TAILSCALE CONNECTION"
           echo "=========================================="
-          echo "User: $USERNAME"
-          echo "Storage: $DISK_SIZE"
-          echo "RAM: ${RAM}MB"
-          echo "CPU: $CPUS"
+          echo "IP: $TAILSCALE_IP"
           echo "=========================================="
 
-      # =====================================================
-      # 8. MANTER WORKFLOW ATIVO
-      # =====================================================
-      - name: Keep Session Alive
+          if [ -z "$TAILSCALE_IP" ]; then
+            echo "Tailscale IP is empty."
+            exit 1
+          fi
+
+          echo "Tailscale connection successful."
+
+      # =========================================================
+      # RDP ACCESS
+      # =========================================================
+
+      - name: Maintain Connection
+        shell: pwsh
+        env:
+          TAILSCALE_IP: ${{ env.TAILSCALE_IP }}
+          RDP_USER: ${{ env.Q4OS_USER }}
+          RDP_PASSWORD: ${{ env.Q4OS_PASSWORD }}
         run: |
-          echo "SESSION ACTIVE."
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: $env:RDP_USER"
+          Write-Host "Password: $env:RDP_PASSWORD"
+          Write-Host "==================`n"
 
+          while ($true) {
+              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Start-Sleep -Seconds 300
+          }
+
+      # =========================================================
+      # KEEP QEMU ALIVE
+      # =========================================================
+
+      - name: Keep QEMU Alive
+        run: |
           while true
           do
             if ! kill -0 "$(cat "$HOME/q4os/qemu.pid")" 2>/dev/null
@@ -177,12 +220,15 @@ jobs:
               exit 1
             fi
 
+            echo "[$(date)] Q4OS VM active."
+
             sleep 60
           done
 
-      # =====================================================
-      # 9. SALVAR LOGS
-      # =====================================================
+      # =========================================================
+      # SAVE LOGS
+      # =========================================================
+
       - name: Save Logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -190,5 +236,4 @@ jobs:
           name: DeepHat-Q4OS-Logs
           path: |
             $HOME/q4os/qemu.log
-            $HOME/q4os/novnc.log
           retention-days: 1
