@@ -1,173 +1,194 @@
-name: RDP - CyberNexus Final (Auto-Letter)
+name: Q4OS Trinity - DeepHat Mobile PC
 
 on:
   workflow_dispatch:
 
 jobs:
-  secure-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 360
+  q4os:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+
+    env:
+      VM_NAME: q4os-mobile
+      RAM: 1024
+      CPUS: 2
+      DISK_SIZE: 145G
+
+      USERNAME: ZynexDEX
+      PASSWORD: ZynexDEX123!
+
+      VNC_PORT: 5900
+      NOVNC_PORT: 6080
+
+      ISO_URL: https://sourceforge.net/projects/q4os/files/stable/q4os-6.9-x64-instcd.r1.iso/download
+      ISO_NAME: q4os-6.9-x64-instcd.r1.iso
 
     steps:
-      # =========================================================
-      # 1. DISCO VIRTUAL (COM AUTO-DETECTOR DE LETRA LIVRE)
-      # =========================================================
-      - name: Create Virtual Disks
-        shell: powershell
+
+      # =====================================================
+      # 1. PREPARAR AMBIENTE
+      # =====================================================
+      - name: Install Dependencies
         run: |
-          $vhdPathD = "C:\RDP-Storage-D.vhdx"
-          $vhdPathE = "C:\RDP-Storage-E.vhdx"
-          $diskpartScript = "C:\vhd_script.txt"
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-x86 \
+            qemu-utils \
+            wget \
+            curl \
+            git \
+            python3
 
-          if (Test-Path $vhdPathD) { Remove-Item $vhdPathD -Force -ErrorAction SilentlyContinue }
-          if (Test-Path $vhdPathE) { Remove-Item $vhdPathE -Force -ErrorAction SilentlyContinue }
-          if (Test-Path $diskpartScript) { Remove-Item $diskpartScript -Force -ErrorAction SilentlyContinue }
+      # =====================================================
+      # 2. BAIXAR Q4OS
+      # =====================================================
+      - name: Download Q4OS
+        run: |
+          mkdir -p "$HOME/q4os"
 
-          # Função para encontrar uma letra livre (F, G, H...)
-          function Get-FreeLetter {
-            $letters = "F","G","H","I","J","K"
-            foreach ($l in $letters) {
-              if (-not (Test-Path "$($l):")) { return $l }
-            }
-            return "F"
-          }
+          wget \
+            --show-progress \
+            -O "$HOME/q4os/$ISO_NAME" \
+            "$ISO_URL"
 
-          $letterD = Get-FreeLetter
-          $letterE = Get-FreeLetter # Ele vai pegar a próxima após a função rodar
+          echo "Q4OS downloaded successfully."
 
-          Write-Host "Letra detectada para D: $letterD"
-          Write-Host "Letra detectada para E: $letterE"
+      # =====================================================
+      # 3. CRIAR DISCO VIRTUAL 145 GB
+      # =====================================================
+      - name: Create Virtual Disk
+        run: |
+          qemu-img create \
+            -f qcow2 \
+            "$HOME/q4os/$VM_NAME.qcow2" \
+            "$DISK_SIZE"
 
-          $cmds = @(
-            "create vdisk file=`"$vhdPathD`" maximum=307200 type=expandable",
-            "select vdisk file=`"$vhdPathD`"",
-            "attach vdisk",
-            "clean",
-            "create partition primary",
-            "format fs=ntfs quick label=RDP_D",
-            "assign letter=$letterD",
-            "exit",
-            "create vdisk file=`"$vhdPathE`" maximum=307200 type=expandable",
-            "select vdisk file=`"$vhdPathE`"",
-            "attach vdisk",
-            "clean",
-            "create partition primary",
-            "format fs=ntfs quick label=RDP_E",
-            "assign letter=$letterE",
-            "exit"
-          )
+          echo "Virtual disk created:"
+          qemu-img info "$HOME/q4os/$VM_NAME.qcow2"
 
-          foreach ($c in $cmds) { $c | Out-File -FilePath $diskpartScript -Append -Encoding ASCII }
+      # =====================================================
+      # 4. INICIAR QEMU
+      # =====================================================
+      - name: Start QEMU
+        run: |
+          cd "$HOME/q4os"
 
-          Write-Host "Executando Diskpart..."
-          $output = diskpart /s $diskpartScript 2>&1
-          Write-Host $output
+          nohup qemu-system-x86_64 \
+            -name "$VM_NAME" \
+            -machine q35 \
+            -accel tcg,thread=multi \
+            -m "$RAM" \
+            -smp "$CPUS" \
+            -cpu max \
+            -drive file="$VM_NAME.qcow2",format=qcow2,if=virtio \
+            -cdrom "$ISO_NAME" \
+            -boot order=d \
+            -vga virtio \
+            -display none \
+            -vnc 0.0.0.0:0 \
+            -netdev user,id=net0 \
+            -device virtio-net-pci,netdev=net0 \
+            > "$HOME/q4os/qemu.log" 2>&1 &
 
-          if ($LASTEXITCODE -ne 0) {
-              Write-Error "Erro no Diskpart. Verifique o log acima."
+          echo $! > "$HOME/q4os/qemu.pid"
+
+          sleep 10
+
+          echo "QEMU started."
+
+      # =====================================================
+      # 5. INSTALAR NOVNC
+      # =====================================================
+      - name: Setup noVNC
+        run: |
+          cd "$HOME/q4os"
+
+          git clone --depth 1 \
+            https://github.com/novnc/noVNC.git \
+            novnc
+
+          cd novnc
+
+          nohup ./utils/novnc_proxy \
+            --vnc localhost:$VNC_PORT \
+            --listen 0.0.0.0:$NOVNC_PORT \
+            > "$HOME/q4os/novnc.log" 2>&1 &
+
+          echo $! > "$HOME/q4os/novnc.pid"
+
+          sleep 5
+
+          echo "noVNC started."
+
+      # =====================================================
+      # 6. SESSION ACTIVE
+      # =====================================================
+      - name: SESSION ACTIVE
+        shell: pwsh
+        env:
+          USERNAME: ${{ env.USERNAME }}
+          PASSWORD: ${{ env.PASSWORD }}
+        run: |
+          $ip = (Invoke-RestMethod -Uri "https://api.ipify.org").Trim()
+          $user = $env:USERNAME
+          $pass = $env:PASSWORD
+
+          Write-Host "===================================================="
+          Write-Host "        🚀 SESSION ACTIVE - DEEPHAT TUNED 🚀        "
+          Write-Host "===================================================="
+          Write-Host "  [+] IP ADDRESS:     $ip"
+          Write-Host "  [+] USERNAME:       $user"
+          Write-Host "  [+] PASSWORD:       $pass"
+          Write-Host "===================================================="
+          Write-Host "  [+] STORAGE:        145GB (VIRTUAL EXPANSION)"
+          Write-Host "  [+] MODE:           GAMING OVERDRIVE (DEBLOATED)"
+          Write-Host "===================================================="
+          Write-Host "  [!] STATUS:         ONLINE (ULTRA-LOW LATENCY)"
+          Write-Host "===================================================="
+          Write-Host "  [!] DICA: Use o Windows App para conectar."
+          Write-Host "===================================================="
+
+      # =====================================================
+      # 7. STATUS
+      # =====================================================
+      - name: Check Session
+        run: |
+          echo "=========================================="
+          echo "Q4OS MOBILE SESSION"
+          echo "=========================================="
+          echo "User: $USERNAME"
+          echo "Storage: $DISK_SIZE"
+          echo "RAM: ${RAM}MB"
+          echo "CPU: $CPUS"
+          echo "=========================================="
+
+      # =====================================================
+      # 8. MANTER WORKFLOW ATIVO
+      # =====================================================
+      - name: Keep Session Alive
+        run: |
+          echo "SESSION ACTIVE."
+
+          while true
+          do
+            if ! kill -0 "$(cat "$HOME/q4os/qemu.pid")" 2>/dev/null
+            then
+              echo "QEMU STOPPED."
               exit 1
-          }
+            fi
 
-          Start-Sleep -Seconds 20
-          Write-Host "Discos $letterD e $letterE prontos!"
+            sleep 60
+          done
 
-      # =========================================================
-      # 2. CONFIGURAR RDP E TEMA ESCURO
-      # =========================================================
-      - name: Configure RDP and Dark Mode
-        shell: powershell
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "SecurityLayer" -Value 0 -Force
-          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
-          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
-          
-          $registryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes/Personalization"
-          if (-not (Test-Path $registryPath)) { New-Item -Path $registryPath -Force }
-          Set-ItemProperty -Path $registryPath -Name "SystemUsesLightTheme" -Value 0 -Force
-          Set-ItemProperty -Path $registryPath -Name "AppsUseLightTheme" -Value 0 -Force
-          
-          Restart-Service -Name TermService -Force
-          Write-Host "RDP e Dark Mode configurados."
-
-      # =========================================================
-      # 3. USUARIO RDP (ZynexDEX)
-      # =========================================================
-      - name: Create RDP User
-        shell: powershell
-        run: |
-          $chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-          $password = ""
-          for ($i=0; $i -lt 16; $i++) { $password += $chars[(Get-Random -Maximum $chars.Length)] }
-          
-          $userName = "ZynexDEX"
-          if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $userName }
-
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name $userName -Password $securePass -AccountNeverExpires -FullName "RDP Admin"
-          Add-LocalGroupMember -Group "Administrators" -Member $userName
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member $userName
-
-          echo "RDP_USER=$userName" >> $env:GITHUB_ENV
-          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
-          
-          Write-Host "-------------------------------------------"
-          Write-Host "USUARIO: $userName"
-          Write-Host "SENHA: $password"
-          Write-Host "-------------------------------------------"
-          Write-Host "::add-mask::$password"
-
-      # =========================================================
-      # 4. TAILSCALE
-      # =========================================================
-      - name: Install Tailscale
-        shell: powershell
-        run: |
-          $installerPath = "$env:TEMP\tailscale-setup.msi"
-          Invoke-WebRequest -Uri "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi" -OutFile $installerPath
-          Start-Process msiexec.exe -ArgumentList "/i `"$installerPath`" /quiet /norestart" -Wait
-          Remove-Item $installerPath -Force
-
-      - name: Establish Tailscale Connection
-        shell: powershell
-        run: |
-          $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe"
-          & $tsExe up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-
-          $tsIP = $null
-          for ($i=0; $i -lt 15; $i++) {
-              $tsIP = & $tsExe ip -4
-              if ($tsIP) { $tsIP = $tsIP.Trim(); break }
-              Write-Host "Aguardando IP..."
-              Start-Sleep -Seconds 10
-          }
-
-          if (-not $tsIP) { exit 1 }
-          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-          Write-Host "IP Tailscale: $tsIP"
-
-      # =========================================================
-      # 5. MANTER CONEXÃO ATIVA
-      # =========================================================
-      - name: Maintain Connection
-        shell: powershell
-        run: |
-          Write-Host "=========================================="
-          Write-Host "          RDP SESSION ACTIVE"
-          Write-Host "=========================================="
-          Write-Host "IP: $env:TAILSCALE_IP"
-          Write-Host "User: $env:RDP_USER"
-          Write-Host "Pass: $env:RDP_PASSWORD"
-          Write-Host "=========================================="
-          
-          while ($true) {
-              $diskD = Get-Volume -DriveLetter D -ErrorAction SilentlyContinue
-              $diskE = Get-Volume -DriveLetter E -ErrorAction SilentlyContinue
-              
-              $statusD = if ($diskD) { "Online" } else { "Offline" }"
-              $statusE = if ($diskE) { "Online" } else { "Offline" }"
-
-              Write-Host "[$(Get-Date)] Status: Online | D: $statusD | E: $statusE"
-              Start-Sleep -Seconds 300
-          }
+      # =====================================================
+      # 9. SALVAR LOGS
+      # =====================================================
+      - name: Save Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepHat-Q4OS-Logs
+          path: |
+            $HOME/q4os/qemu.log
+            $HOME/q4os/novnc.log
+          retention-days: 1
