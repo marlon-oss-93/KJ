@@ -39,7 +39,11 @@ jobs:
           echo "          DEEPHAT Q4OS SYSTEM INITIALIZER"
           echo "===================================================="
 
-          echo "Runner:"
+          echo "HOSTNAME:"
+          hostname
+
+          echo ""
+          echo "KERNEL:"
           uname -a
 
           echo ""
@@ -47,11 +51,11 @@ jobs:
           nproc
 
           echo ""
-          echo "Memory:"
+          echo "MEMORY:"
           free -h
 
           echo ""
-          echo "Storage:"
+          echo "STORAGE:"
           df -h
 
           echo "===================================================="
@@ -73,13 +77,13 @@ jobs:
             curl \
             git \
             python3 \
-            python3-pip \
             xz-utils \
             net-tools \
             iproute2 \
             procps \
             jq
 
+          echo ""
           echo "===================================================="
           echo "DEPENDENCIES INSTALLED"
           echo "===================================================="
@@ -87,13 +91,12 @@ jobs:
           qemu-system-x86_64 --version
           qemu-img --version
           python3 --version
-          curl --version | head -n 1
 
       # =========================================================
-      # 03 - CREATE WORKSPACE
+      # 03 - PREPARE WORKSPACE
       # =========================================================
 
-      - name: Prepare Q4OS Workspace
+      - name: Prepare Workspace
         run: |
           set -e
 
@@ -102,8 +105,8 @@ jobs:
           mkdir -p "$VM_DIR/scripts"
           mkdir -p "$VM_DIR/novnc"
 
-          echo "Workspace:"
-          find "$VM_DIR" -maxdepth 1 -type d -print
+          echo "Workspace created:"
+          echo "$VM_DIR"
 
       # =========================================================
       # 04 - DOWNLOAD Q4OS
@@ -124,16 +127,15 @@ jobs:
             -O "$Q4OS_ISO" \
             "$Q4OS_ISO_URL"
 
-          if [ ! -f "$Q4OS_ISO" ]; then
-            echo "Q4OS ISO was not downloaded."
+          if [ ! -s "$Q4OS_ISO" ]; then
+            echo "Q4OS ISO download failed."
             exit 1
           fi
 
-          ISO_SIZE=$(du -h "$Q4OS_ISO" | cut -f1)
+          echo ""
+          echo "Q4OS ISO downloaded successfully."
 
-          echo "Q4OS ISO:"
-          echo "$Q4OS_ISO"
-          echo "Size: $ISO_SIZE"
+          ls -lh "$Q4OS_ISO"
 
       # =========================================================
       # 05 - VALIDATE ISO
@@ -145,18 +147,19 @@ jobs:
 
           cd "$VM_DIR"
 
-          if [ ! -s "$Q4OS_ISO" ]; then
-            echo "ISO file is empty."
-            exit 1
-          fi
+          echo "Checking ISO..."
 
           file "$Q4OS_ISO"
 
-          echo ""
+          if [ ! -s "$Q4OS_ISO" ]; then
+            echo "Invalid ISO."
+            exit 1
+          fi
+
           echo "ISO validation completed."
 
       # =========================================================
-      # 06 - CREATE 145GB QCOW2 DISK
+      # 06 - CREATE 145GB DISK
       # =========================================================
 
       - name: Create 145GB Virtual Disk
@@ -165,29 +168,26 @@ jobs:
 
           DISK="$VM_DIR/$VM_NAME.qcow2"
 
-          if [ -f "$DISK" ]; then
-            echo "Existing disk found."
-          else
-            echo "Creating 145GB QCOW2 disk..."
+          echo "Creating virtual disk..."
 
-            qemu-img create \
-              -f qcow2 \
-              -o lazy_refcounts=on \
-              "$DISK" \
-              "$DISK_SIZE"
-          fi
+          qemu-img create \
+            -f qcow2 \
+            -o lazy_refcounts=on \
+            "$DISK" \
+            "$DISK_SIZE"
 
+          echo ""
           echo "===================================================="
-          echo "VIRTUAL DISK INFORMATION"
+          echo "VIRTUAL DISK"
           echo "===================================================="
 
           qemu-img info "$DISK"
 
       # =========================================================
-      # 07 - CREATE VM CONFIGURATION
+      # 07 - CREATE VM INFORMATION
       # =========================================================
 
-      - name: Generate VM Configuration
+      - name: Create VM Configuration
         run: |
           cat > "$VM_DIR/vm-info.txt" <<EOF
           VM_NAME=$VM_NAME
@@ -206,13 +206,15 @@ jobs:
       # 08 - START QEMU
       # =========================================================
 
-      - name: Start Q4OS Virtual Machine
+      - name: Start Q4OS VM
         run: |
           set -e
 
           cd "$VM_DIR"
 
           QEMU_LOG="$VM_DIR/logs/qemu.log"
+
+          echo "Starting QEMU..."
 
           nohup qemu-system-x86_64 \
             -name "$VM_NAME" \
@@ -229,7 +231,6 @@ jobs:
             -vnc "0.0.0.0:$VNC_DISPLAY" \
             -netdev user,id=net0,hostfwd=tcp::${RDP_PORT}-:3389 \
             -device virtio-net-pci,netdev=net0 \
-            -monitor none \
             > "$QEMU_LOG" 2>&1 &
 
           QEMU_PID=$!
@@ -243,21 +244,17 @@ jobs:
             echo "QEMU PID: $QEMU_PID"
           else
             echo "QEMU failed to start."
+            echo ""
             cat "$QEMU_LOG"
             exit 1
           fi
 
       # =========================================================
-      # 09 - CHECK VM PROCESS
+      # 09 - VERIFY VM
       # =========================================================
 
-      - name: Verify Virtual Machine
+      - name: Verify Q4OS VM
         run: |
-          if [ ! -f "$VM_DIR/qemu.pid" ]; then
-            echo "QEMU PID file missing."
-            exit 1
-          fi
-
           PID=$(cat "$VM_DIR/qemu.pid")
 
           if kill -0 "$PID" 2>/dev/null; then
@@ -266,7 +263,7 @@ jobs:
             echo "PID: $PID"
             echo "===================================================="
           else
-            echo "Q4OS VM is not running."
+            echo "Q4OS VM is offline."
             exit 1
           fi
 
@@ -277,8 +274,6 @@ jobs:
       - name: Install noVNC
         run: |
           set -e
-
-          cd "$VM_DIR"
 
           if [ ! -d "$VM_DIR/novnc/.git" ]; then
             git clone \
@@ -321,7 +316,7 @@ jobs:
             echo "noVNC STATUS: ONLINE"
             echo "PID: $NOVNC_PID"
           else
-            echo "noVNC failed to start."
+            echo "noVNC failed."
             cat "$NOVNC_LOG"
             exit 1
           fi
@@ -334,6 +329,10 @@ jobs:
         run: |
           set -e
 
+          echo "===================================================="
+          echo "INSTALLING TAILSCALE"
+          echo "===================================================="
+
           curl -fsSL https://tailscale.com/install.sh | sh
 
           sudo systemctl enable --now tailscaled
@@ -343,40 +342,270 @@ jobs:
           tailscale version
 
       # =========================================================
-      # 13 - CONNECT TAILSCALE
+      # 13 - TAILSCALE LOGIN
       # =========================================================
 
-      - name: Establish Tailscale Connection
+      - name: Login to Tailscale
+        env:
+          TS_AUTH_KEY: ${{ secrets.TAILSCALE_AUTHKEY }}
         run: |
           set -e
 
-          if [ -z "${{ secrets.TAILSCALE_AUTH_KEY }}" ]; then
-            echo "TAILSCALE_AUTH_KEY secret is missing."
+          echo "===================================================="
+          echo "             TAILSCALE LOGIN"
+          echo "===================================================="
+
+          if [ -z "$TS_AUTH_KEY" ]; then
+            echo "ERROR: TAILSCALE_AUTHKEY secret is missing."
+            echo ""
+            echo "Create this GitHub Repository Secret:"
+            echo ""
+            echo "TAILSCALE_AUTHKEY"
+            echo ""
             exit 1
           fi
 
           sudo tailscale up \
-            --auth-key="${{ secrets.TAILSCALE_AUTH_KEY }}" \
-            --hostname="gh-q4os-${GITHUB_RUN_ID}"
+            --auth-key="$TS_AUTH_KEY" \
+            --hostname="gh-q4os-${GITHUB_RUN_ID}" \
+            --accept-routes=false
 
           sleep 5
 
-          TS_IP=$(tailscale ip -4 | head -n 1)
+          echo ""
+          echo "TAILSCALE STATUS:"
+          sudo tailscale status
+
+          TS_IP=$(sudo tailscale ip -4 | head -n 1)
 
           if [ -z "$TS_IP" ]; then
-            echo "Tailscale IP was not assigned."
+            echo "ERROR: Tailscale IP was not assigned."
             exit 1
           fi
 
           echo "TAILSCALE_IP=$TS_IP" >> "$GITHUB_ENV"
 
+          echo ""
           echo "===================================================="
-          echo "TAILSCALE ONLINE"
+          echo "      TAILSCALE LOGIN SUCCESS"
+          echo "===================================================="
+          echo "Hostname: gh-q4os-${GITHUB_RUN_ID}"
           echo "IP: $TS_IP"
           echo "===================================================="
 
       # =========================================================
-      # 14 - CHECK NETWORK
+      # 14 - NETWORK DIAGNOSTICS
+      # =========================================================
+
+      - name: Network Diagnostics
+        run: |
+          echo "===================================================="
+          echo "NETWORK DIAGNOSTICS"
+          echo "===================================================="
+
+          echo ""
+          echo "Tailscale:"
+          sudo tailscale status || true
+
+          echo ""
+          echo "Tailscale IP:"
+          sudo tailscale ip -4 || true
+
+          echo ""
+          echo "Network interfaces:"
+          ip addr
+
+          echo ""
+          echo "Listening ports:"
+          ss -lntp || true
+
+      # =========================================================
+      # 15 - PREPARE LOGIN
+      # =========================================================
+
+      - name: Prepare RDP Login
+        shell: pwsh
+        env:
+          USERNAME: ${{ env.Q4OS_USER }}
+          PASSWORD: ${{ env.Q4OS_PASSWORD }}
+        run: |
+          $user = $env:USERNAME
+          $pass = $env:PASSWORD
+
+          "RDP_USER=$user" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+          "RDP_PASSWORD=$pass" |
+            Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Write-Host "RDP credentials prepared."
+
+      # =========================================================
+      # 16 - SESSION ACTIVE
+      # =========================================================
+
+      - name: SESSION ACTIVE
+        shell: pwsh
+        env:
+          USERNAME: ${{ env.Q4OS_USER }}
+          PASSWORD: ${{ env.Q4OS_PASSWORD }}
+          TAILSCALE_IP: ${{ env.TAILSCALE_IP }}
+        run: |
+          $ip = $env:TAILSCALE_IP
+          $user = $env:USERNAME
+          $pass = $env:PASSWORD
+
+          Write-Host "===================================================="
+          Write-Host "        🚀 SESSION ACTIVE - DEEPHAT TUNED 🚀        "
+          Write-Host "===================================================="
+          Write-Host "  [+] IP ADDRESS:     $ip"
+          Write-Host "  [+] USERNAME:       $user"
+          Write-Host "  [+] PASSWORD:       $pass"
+          Write-Host "===================================================="
+          Write-Host "  [+] STORAGE:        145GB (VIRTUAL EXPANSION)"
+          Write-Host "  [+] MODE:           GAMING OVERDRIVE (DEBLOATED)"
+          Write-Host "===================================================="
+          Write-Host "  [!] STATUS:         ONLINE"
+          Write-Host "===================================================="
+          Write-Host "  [!] DICA: Use o Windows App para conectar."
+          Write-Host "===================================================="
+
+      # =========================================================
+      # 17 - SERVICE CHECK
+      # =========================================================
+
+      - name: Service Check
+        run: |
+          echo "===================================================="
+          echo "SERVICE CHECK"
+          echo "===================================================="
+
+          echo ""
+          echo "QEMU:"
+
+          if kill -0 "$(cat "$VM_DIR/qemu.pid")" 2>/dev/null; then
+            echo "ONLINE"
+          else
+            echo "OFFLINE"
+            exit 1
+          fi
+
+          echo ""
+          echo "noVNC:"
+
+          if kill -0 "$(cat "$VM_DIR/novnc.pid")" 2>/dev/null; then
+            echo "ONLINE"
+          else
+            echo "OFFLINE"
+          fi
+
+          echo ""
+          echo "Ports:"
+          ss -lnt | grep -E ":5900|:6080|:3389" || true
+
+          echo ""
+          echo "Tailscale:"
+          sudo tailscale status || true
+
+      # =========================================================
+      # 18 - SESSION REPORT
+      # =========================================================
+
+      - name: Create Session Report
+        run: |
+          cat > "$VM_DIR/session-report.txt" <<EOF
+          ==========================================
+                    DEEPHAT Q4OS SESSION
+          ==========================================
+
+          VM:
+          $VM_NAME
+
+          RAM:
+          ${RAM_MB}MB
+
+          CPU:
+          $CPU_CORES
+
+          STORAGE:
+          $DISK_SIZE
+
+          USERNAME:
+          $Q4OS_USER
+
+          TAILSCALE IP:
+          $TAILSCALE_IP
+
+          VNC PORT:
+          $VNC_PORT
+
+          NOVNC PORT:
+          $NOVNC_PORT
+
+          RDP PORT:
+          $RDP_PORT
+
+          STATUS:
+          ONLINE
+
+          ==========================================
+          EOF
+
+          cat "$VM_DIR/session-report.txt"
+
+      # =========================================================
+      # 19 - MONITOR SESSION
+      # =========================================================
+
+      - name: Monitor Session
+        run: |
+          set -e
+
+          echo "===================================================="
+          echo "        DEEPHAT SESSION MONITOR"
+          echo "===================================================="
+
+          while true
+          do
+            if ! kill -0 "$(cat "$VM_DIR/qemu.pid")" 2>/dev/null
+            then
+              echo "QEMU STOPPED."
+
+              echo ""
+              echo "===== QEMU LOG ====="
+
+              cat "$VM_DIR/logs/qemu.log" || true
+
+              exit 1
+            fi
+
+            if [ -f "$VM_DIR/novnc.pid" ]; then
+              if ! kill -0 "$(cat "$VM_DIR/novnc.pid")" 2>/dev/null
+              then
+                echo "WARNING: noVNC stopped."
+              fi
+            fi
+
+            echo "[$(date)] Q4OS VM ONLINE"
+            echo "[$(date)] Tailscale: $TAILSCALE_IP"
+
+            sleep 300
+          done
+
+      # =========================================================
+      # 20 - SAVE LOGS
+      # =========================================================
+
+      - name: Save DeepHat Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepHat-Q4OS-Session
+          path: |
+            /home/runner/q4os/logs/
+            /home/runner/q4os/session-report.txt
+            /home/runner/q4os/vm-info.txt
+          retention-days: 1ECK NETWORK
       # =========================================================
 
       - name: Network Diagnostics
